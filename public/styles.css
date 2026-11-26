@@ -611,6 +611,21 @@ input[type="range"] {
   z-index: 10;
 }
 
+.tooltip-title {
+  font-weight: 700;
+}
+
+.tooltip-time {
+  opacity: 0.85;
+  margin-top: 2px;
+}
+
+.table-pagination {
+  margin-top: 14px;
+  display: flex;
+  justify-content: center;
+}
+
 .empty-state {
   color: var(--text-muted);
   font-size: 0.9rem;

@@ -1,0 +1,116 @@
+openapi: 3.1.0
+info:
+  title: HealthTrack Patient Symptom Tracker API
+  version: 1.0.0
+  description: REST API for logging patient symptoms, retrieving sorted histories, and computing 30-day severity trends.
+paths:
+  /api/health:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: Service is healthy
+  /api/config:
+    get:
+      summary: Validation and pagination configuration
+      responses:
+        '200':
+          description: Shared validation constraints
+  /api/patients:
+    get:
+      summary: List distinct patients with summary metrics
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: Paginated patient list
+  /api/patients/{patientId}/summary:
+    get:
+      summary: Get all-time summary metrics and 30-day daily averages for a patient
+      parameters:
+        - in: path
+          name: patientId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Patient summary and 30-day daily averages
+        '400':
+          description: Invalid patient ID
+  /api/symptoms:
+    post:
+      summary: Log a new patient symptom entry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [patientId, symptomDescription, severity]
+              properties:
+                patientId:
+                  type: string
+                  maxLength: 64
+                symptomDescription:
+                  type: string
+                  maxLength: 500
+                severity:
+                  type: integer
+                  minimum: 1
+                  maximum: 10
+                timestamp:
+                  type: string
+                  format: date-time
+      responses:
+        '201':
+          description: Symptom log created
+        '400':
+          description: Validation error or malformed JSON
+        '413':
+          description: Request body exceeds 16 KB
+  /api/symptoms/{patientId}:
+    get:
+      summary: Retrieve sorted symptom logs for a patient
+      parameters:
+        - in: path
+          name: patientId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: sort
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: asc
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: Sorted symptom logs
+        '400':
+          description: Invalid patient ID or query parameter

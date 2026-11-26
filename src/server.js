@@ -4,6 +4,7 @@ import { createApp } from './app.js';
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || '127.0.0.1';
 const DB_PATH = process.env.DB_PATH || undefined;
+const SHUTDOWN_TIMEOUT_MS = 5000;
 
 const store = new SymptomStore(DB_PATH);
 const server = createApp({ store });
@@ -14,7 +15,17 @@ server.listen(PORT, HOST, () => {
 
 function shutdown(signal) {
   console.log(`\nReceived ${signal}. Shutting down HealthTrack...`);
+
+  const forceTimer = setTimeout(() => {
+    console.error('Forced shutdown after timeout.');
+    store.close();
+    process.exit(1);
+  }, SHUTDOWN_TIMEOUT_MS);
+  forceTimer.unref();
+
+  server.closeAllConnections?.();
   server.close(() => {
+    clearTimeout(forceTimer);
     store.close();
     process.exit(0);
   });

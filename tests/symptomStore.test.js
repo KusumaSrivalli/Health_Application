@@ -43,6 +43,12 @@ describe('SymptomStore', () => {
       desc.map((l) => l.symptomDescription),
       ['Day 5 symptom', 'Day 4 symptom', 'Day 3 symptom', 'Day 2 symptom', 'Day 1 symptom']
     );
+
+    const page = store.getLogsByPatient('PAT-A', { sort: 'asc', limit: 2, offset: 2 });
+    assert.deepEqual(
+      page.map((l) => l.symptomDescription),
+      ['Day 3 symptom', 'Day 4 symptom']
+    );
   });
 
   it('summarizes distinct patients with counts and average severity', () => {

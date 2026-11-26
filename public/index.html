@@ -153,17 +153,17 @@
         </div>
 
         <!-- Summary Metrics -->
-        <div class="metrics-grid" aria-label="Symptom summary metrics">
+        <div class="metrics-grid" aria-label="All-time symptom summary metrics">
           <div class="metric-card">
-            <span class="metric-label">Total Entries</span>
+            <span class="metric-label">All-Time Entries</span>
             <strong id="metric-count" class="metric-value">0</strong>
           </div>
           <div class="metric-card">
-            <span class="metric-label">Avg Severity</span>
+            <span class="metric-label">All-Time Avg</span>
             <strong id="metric-avg" class="metric-value">—</strong>
           </div>
           <div class="metric-card">
-            <span class="metric-label">Peak Severity</span>
+            <span class="metric-label">All-Time Peak</span>
             <strong id="metric-peak" class="metric-value">—</strong>
           </div>
           <div class="metric-card">
@@ -216,6 +216,9 @@
                 </tr>
               </tbody>
             </table>
+          </div>
+          <div id="table-pagination" class="table-pagination hidden">
+            <button id="load-more-btn" type="button" class="btn btn-secondary btn-sm">Load More Entries</button>
           </div>
         </section>
       </section>

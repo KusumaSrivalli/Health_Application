@@ -100,8 +100,8 @@ describe('validateSymptomInput', () => {
     assert.ok(res.errors.some((e) => e.field === 'symptomDescription'));
   });
 
-  it('rejects out-of-range, decimal, and non-numeric severities', () => {
-    for (const badSeverity of [0, 11, -3, 5.5, 'abc', '', null, undefined, true]) {
+  it('rejects out-of-range, decimal, string, and non-numeric severities', () => {
+    for (const badSeverity of [0, 11, -3, 5.5, '5', 'abc', '', null, undefined, true]) {
       const res = validateSymptomInput({
         patientId: 'PAT-1',
         symptomDescription: 'Cough',
@@ -112,15 +112,26 @@ describe('validateSymptomInput', () => {
     }
   });
 
-  it('rejects invalid timestamp formats', () => {
-    const res = validateSymptomInput({
+  it('rejects non-ISO-8601 and future timestamp formats', () => {
+    for (const badTs of ['not-a-valid-date', '2026', '12', '2026-11-26']) {
+      const res = validateSymptomInput({
+        patientId: 'PAT-1',
+        symptomDescription: 'Cough',
+        severity: 3,
+        timestamp: badTs
+      });
+      assert.equal(res.valid, false, `Expected timestamp "${badTs}" to fail`);
+      assert.ok(res.errors.some((e) => e.field === 'timestamp'));
+    }
+
+    const futureTs = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const futureRes = validateSymptomInput({
       patientId: 'PAT-1',
       symptomDescription: 'Cough',
       severity: 3,
-      timestamp: 'not-a-valid-date'
+      timestamp: futureTs
     });
-
-    assert.equal(res.valid, false);
-    assert.ok(res.errors.some((e) => e.field === 'timestamp'));
+    assert.equal(futureRes.valid, false);
+    assert.ok(futureRes.errors.some((e) => e.field === 'timestamp'));
   });
 });

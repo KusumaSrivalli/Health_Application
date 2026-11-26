@@ -1,14 +1,26 @@
+import { apiFetch, setConnectionStatus } from '/api.js';
+import { renderChart } from '/chart.js';
+import { renderMetrics, renderPatientsList, renderTable } from '/table.js';
+import { getSeverityInfo, toLocalDateTimeInputValue } from '/utils.js';
+
 /**
- * HealthTrack Frontend Application
- * Handles symptom submission, validation, error recovery, table rendering, and SVG trend charting.
+ * HealthTrack Frontend Orchestrator
+ * Coordinates state, form submission, error banners, and modular view rendering.
  */
 
 const state = {
   activePatientId: '',
   sort: 'asc',
   logs: [],
+  summary: null,
   patients: [],
-  lastFailedAction: null
+  lastFailedAction: null,
+  activeLoadController: null,
+  config: {
+    minSeverity: 1,
+    maxSeverity: 10,
+    maxDescriptionLength: 500
+  }
 };
 
 const elements = {
@@ -50,39 +62,13 @@ const elements = {
   chartContainer: document.getElementById('chart-container'),
   chartTooltip: document.getElementById('chart-tooltip'),
   activePatientSubtitle: document.getElementById('active-patient-subtitle'),
-  symptomsTbody: document.getElementById('symptoms-tbody')
+  symptomsTbody: document.getElementById('symptoms-tbody'),
+  tablePagination: document.getElementById('table-pagination'),
+  loadMoreBtn: document.getElementById('load-more-btn')
 };
 
-// --- Helpers ---
-
-function getSeverityInfo(severity) {
-  if (severity <= 3) return { label: 'Mild', className: 'severity-mild', color: '#15803d' };
-  if (severity <= 6) return { label: 'Moderate', className: 'severity-moderate', color: '#d97706' };
-  return { label: 'Severe', className: 'severity-severe', color: '#dc2626' };
-}
-
-function formatDateTime(isoString) {
-  const date = new Date(isoString);
-  if (Number.isNaN(date.getTime())) return isoString;
-  return date.toLocaleString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit'
-  });
-}
-
-function formatShortDate(isoString) {
-  const date = new Date(isoString);
-  if (Number.isNaN(date.getTime())) return isoString;
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-}
-
-function toLocalDateTimeInputValue(date = new Date()) {
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
+const request = (url, options = {}) =>
+  apiFetch(url, options, (online) => setConnectionStatus(elements.connectionStatus, online));
 
 function showBanner(type, title, message, retryFn = null) {
   elements.feedbackBanner.className = `banner ${type}`;
@@ -134,357 +120,51 @@ function setFieldError(fieldName, message) {
   }
 }
 
-async function apiFetch(url, options = {}) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 8000);
-
-  try {
-    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-      setConnectionStatus(false);
-      const offlineErr = new Error('You appear to be offline. Please check your network connection and try again.');
-      offlineErr.isNetworkError = true;
-      throw offlineErr;
-    }
-
-    const response = await fetch(url, {
-      ...options,
-      signal: controller.signal
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const err = new Error(data.error || `Server error (${response.status}). Please try again.`);
-      err.status = response.status;
-      err.details = data.details || [];
-      throw err;
-    }
-    setConnectionStatus(true);
-    return data;
-  } catch (err) {
-    if (err.name === 'AbortError') {
-      setConnectionStatus(false);
-      const timeoutErr = new Error('Request timed out. Please check your connection and try again.');
-      timeoutErr.isNetworkError = true;
-      throw timeoutErr;
-    }
-    if (err instanceof TypeError) {
-      setConnectionStatus(false);
-      const netErr = new Error('Unable to reach the HealthTrack server. Verify the server is running.');
-      netErr.isNetworkError = true;
-      throw netErr;
-    }
-    throw err;
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
-
-function setConnectionStatus(online) {
-  const el = elements.connectionStatus;
-  el.className = `status-pill ${online ? 'status-online' : 'status-offline'}`;
-  el.querySelector('.status-text').textContent = online ? 'API Connected' : 'API Unreachable';
-}
-
-// --- Rendering ---
-
 function renderSeverityPreview() {
   const val = Number(elements.severityInput.value);
   const info = getSeverityInfo(val);
   elements.severityPreview.className = `severity-badge ${info.className}`;
-  elements.severityPreview.textContent = `${val} / 10 · ${info.label}`;
+  elements.severityPreview.textContent = `${val} / ${state.config.maxSeverity} · ${info.label}`;
 }
 
-function renderPatientsList() {
-  elements.knownPatientsList.innerHTML = '';
-  elements.quickPatientsChips.innerHTML = '';
-
-  if (state.patients.length === 0) {
-    elements.quickPatients.classList.add('hidden');
-    return;
-  }
-
-  elements.quickPatients.classList.remove('hidden');
-
-  for (const p of state.patients) {
-    const option = document.createElement('option');
-    option.value = p.patientId;
-    elements.knownPatientsList.appendChild(option);
-
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = `chip ${p.patientId === state.activePatientId ? 'active' : ''}`;
-    chip.textContent = `${p.patientId} (${p.logCount})`;
-    chip.addEventListener('click', () => {
-      loadPatientLogs(p.patientId);
-    });
-    elements.quickPatientsChips.appendChild(chip);
-  }
-}
-
-function renderMetrics(logs) {
-  elements.metricCount.textContent = String(logs.length);
-
-  if (logs.length === 0) {
-    elements.metricAvg.textContent = '—';
-    elements.metricPeak.textContent = '—';
-    elements.metricTrend.textContent = '—';
-    return;
-  }
-
-  const chronological = [...logs].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-  const sum = chronological.reduce((acc, item) => acc + item.severity, 0);
-  const avg = (sum / chronological.length).toFixed(1);
-  const peak = Math.max(...chronological.map((item) => item.severity));
-
-  elements.metricAvg.textContent = `${avg} / 10`;
-  elements.metricPeak.textContent = `${peak} / 10`;
-
-  if (chronological.length < 2) {
-    elements.metricTrend.textContent = 'Baseline';
-  } else {
-    const prev = chronological[chronological.length - 2].severity;
-    const latest = chronological[chronological.length - 1].severity;
-    const diff = latest - prev;
-    if (diff < 0) elements.metricTrend.textContent = `Improving (${diff})`;
-    else if (diff > 0) elements.metricTrend.textContent = `Worsening (+${diff})`;
-    else elements.metricTrend.textContent = 'Stable (0)';
-  }
-}
-
-function renderTable(logs) {
-  elements.symptomsTbody.innerHTML = '';
-
-  if (!state.activePatientId) {
-    elements.activePatientSubtitle.textContent = 'No patient selected';
-    const row = document.createElement('tr');
-    row.innerHTML = '<td colspan="4" class="empty-cell">Enter or select a Patient ID to view logs.</td>';
-    elements.symptomsTbody.appendChild(row);
-    return;
-  }
-
-  elements.activePatientSubtitle.textContent = `Showing ${logs.length} ${logs.length === 1 ? 'entry' : 'entries'} for ${state.activePatientId}`;
-
-  if (logs.length === 0) {
-    const row = document.createElement('tr');
-    const cell = document.createElement('td');
-    cell.colSpan = 4;
-    cell.className = 'empty-cell';
-    cell.textContent = `No symptom logs recorded yet for ${state.activePatientId}.`;
-    row.appendChild(cell);
-    elements.symptomsTbody.appendChild(row);
-    return;
-  }
-
-  for (const log of logs) {
-    const info = getSeverityInfo(log.severity);
-    const tr = document.createElement('tr');
-
-    const timeTd = document.createElement('td');
-    timeTd.textContent = formatDateTime(log.timestamp);
-
-    const descTd = document.createElement('td');
-    descTd.textContent = log.symptomDescription;
-
-    const sevTd = document.createElement('td');
-    const badge = document.createElement('span');
-    badge.className = `severity-badge ${info.className}`;
-    badge.textContent = `${log.severity} / 10`;
-    sevTd.appendChild(badge);
-
-    const levelTd = document.createElement('td');
-    levelTd.textContent = info.label;
-
-    tr.append(timeTd, descTd, sevTd, levelTd);
-    elements.symptomsTbody.appendChild(tr);
-  }
-}
-
-function aggregateLast30DaysAverage(logs) {
-  const cutoffMs = Date.now() - 30 * 24 * 60 * 60 * 1000;
-  const recent = logs.filter((log) => {
-    const ms = Date.parse(log.timestamp);
-    return !Number.isNaN(ms) && ms >= cutoffMs;
+function syncPatientsView() {
+  renderPatientsList({
+    knownPatientsList: elements.knownPatientsList,
+    quickPatients: elements.quickPatients,
+    quickPatientsChips: elements.quickPatientsChips,
+    patients: state.patients,
+    activePatientId: state.activePatientId,
+    onSelectPatient: loadPatientLogs
   });
-
-  const byDay = new Map();
-  for (const log of recent) {
-    const d = new Date(log.timestamp);
-    const dayKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    if (!byDay.has(dayKey)) {
-      byDay.set(dayKey, { dayKey, timestamp: log.timestamp, sum: 0, count: 0, descriptions: [] });
-    }
-    const bucket = byDay.get(dayKey);
-    bucket.sum += log.severity;
-    bucket.count += 1;
-    bucket.descriptions.push(log.symptomDescription);
-  }
-
-  return Array.from(byDay.values())
-    .sort((a, b) => a.dayKey.localeCompare(b.dayKey))
-    .map((bucket) => ({
-      dayKey: bucket.dayKey,
-      timestamp: bucket.timestamp,
-      severity: Number((bucket.sum / bucket.count).toFixed(1)),
-      count: bucket.count,
-      descriptions: bucket.descriptions
-    }));
 }
 
-function renderChart(logs) {
-  elements.chartContainer.innerHTML = '';
-  elements.chartTooltip.classList.add('hidden');
-
-  if (!state.activePatientId) {
-    elements.chartContainer.innerHTML = '<div class="empty-state">Enter or select a Patient ID to view severity trends.</div>';
-    return;
+async function loadConfig() {
+  try {
+    const cfg = await request('/api/config');
+    state.config = { ...state.config, ...cfg };
+    elements.descriptionInput.maxLength = state.config.maxDescriptionLength;
+    elements.severityInput.min = String(state.config.minSeverity);
+    elements.severityInput.max = String(state.config.maxSeverity);
+    elements.charCounter.textContent = `${elements.descriptionInput.value.length} / ${state.config.maxDescriptionLength}`;
+    renderSeverityPreview();
+  } catch {
+    // Keep sensible defaults if /api/config is unreachable
   }
-
-  if (logs.length === 0) {
-    elements.chartContainer.innerHTML = '<div class="empty-state">No data points yet for this patient.</div>';
-    return;
-  }
-
-  const dailyPoints = aggregateLast30DaysAverage(logs);
-  if (dailyPoints.length === 0) {
-    elements.chartContainer.innerHTML = '<div class="empty-state">No symptom logs recorded in the last 30 days.</div>';
-    return;
-  }
-
-  const width = 680;
-  const height = 220;
-  const pad = { top: 18, right: 24, bottom: 34, left: 36 };
-  const plotW = width - pad.left - pad.right;
-  const plotH = height - pad.top - pad.bottom;
-
-  const svgNS = 'http://www.w3.org/2000/svg';
-  const svg = document.createElementNS(svgNS, 'svg');
-  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-  svg.setAttribute('class', 'chart-svg');
-  svg.setAttribute('role', 'img');
-  svg.setAttribute('aria-label', `30-day average symptom severity trend chart for ${state.activePatientId}`);
-
-  const yForSeverity = (sev) => pad.top + ((10 - sev) / 9) * plotH;
-  const xForIndex = (idx) => {
-    if (dailyPoints.length === 1) return pad.left + plotW / 2;
-    return pad.left + (idx / (dailyPoints.length - 1)) * plotW;
-  };
-
-  // Horizontal gridlines for 1, 4, 7, 10
-  for (const level of [1, 4, 7, 10]) {
-    const y = yForSeverity(level);
-    const line = document.createElementNS(svgNS, 'line');
-    line.setAttribute('x1', String(pad.left));
-    line.setAttribute('x2', String(width - pad.right));
-    line.setAttribute('y1', String(y));
-    line.setAttribute('y2', String(y));
-    line.setAttribute('stroke', '#e2e8f0');
-    line.setAttribute('stroke-dasharray', level === 1 ? 'none' : '4 4');
-    svg.appendChild(line);
-
-    const label = document.createElementNS(svgNS, 'text');
-    label.setAttribute('x', String(pad.left - 8));
-    label.setAttribute('y', String(y + 4));
-    label.setAttribute('text-anchor', 'end');
-    label.setAttribute('font-size', '11');
-    label.setAttribute('fill', '#64748b');
-    label.textContent = String(level);
-    svg.appendChild(label);
-  }
-
-  // Polyline path
-  const points = dailyPoints.map((item, idx) => ({
-    x: xForIndex(idx),
-    y: yForSeverity(item.severity),
-    item
-  }));
-
-  if (points.length > 1) {
-    const polyline = document.createElementNS(svgNS, 'polyline');
-    polyline.setAttribute('fill', 'none');
-    polyline.setAttribute('stroke', '#0f766e');
-    polyline.setAttribute('stroke-width', '2.5');
-    polyline.setAttribute('stroke-linejoin', 'round');
-    polyline.setAttribute('stroke-linecap', 'round');
-    polyline.setAttribute('points', points.map((p) => `${p.x},${p.y}`).join(' '));
-    svg.appendChild(polyline);
-  }
-
-  // Data points & X-axis labels
-  const labelStep = Math.max(1, Math.ceil(points.length / 6));
-  points.forEach((pt, idx) => {
-    const info = getSeverityInfo(Math.round(pt.item.severity));
-
-    if (idx % labelStep === 0 || idx === points.length - 1) {
-      const xLabel = document.createElementNS(svgNS, 'text');
-      xLabel.setAttribute('x', String(pt.x));
-      xLabel.setAttribute('y', String(height - 10));
-      xLabel.setAttribute('text-anchor', 'middle');
-      xLabel.setAttribute('font-size', '11');
-      xLabel.setAttribute('fill', '#64748b');
-      xLabel.textContent = formatShortDate(pt.item.timestamp);
-      svg.appendChild(xLabel);
-    }
-
-    const circle = document.createElementNS(svgNS, 'circle');
-    circle.setAttribute('cx', String(pt.x));
-    circle.setAttribute('cy', String(pt.y));
-    circle.setAttribute('r', '5');
-    circle.setAttribute('fill', info.color);
-    circle.setAttribute('stroke', '#ffffff');
-    circle.setAttribute('stroke-width', '2');
-    circle.setAttribute('class', 'chart-point');
-    circle.setAttribute('tabindex', '0');
-
-    const showTip = () => {
-      const tip = elements.chartTooltip;
-      tip.innerHTML = '';
-      const header = document.createElement('div');
-      header.style.fontWeight = '700';
-      header.textContent = `Avg Severity ${pt.item.severity}/10 (${info.label})`;
-
-      const time = document.createElement('div');
-      time.style.opacity = '0.85';
-      time.textContent = `${pt.item.dayKey} · ${pt.item.count} ${pt.item.count === 1 ? 'entry' : 'entries'}`;
-
-      const desc = document.createElement('div');
-      desc.style.marginTop = '4px';
-      desc.textContent = pt.item.descriptions.join('; ');
-
-      tip.append(header, time, desc);
-      tip.classList.remove('hidden');
-
-      const leftPct = (pt.x / width) * 100;
-      const topPct = (pt.y / height) * 100;
-      tip.style.left = `clamp(12px, ${leftPct}%, calc(100% - 250px))`;
-      tip.style.top = `${Math.max(8, topPct - 18)}%`;
-    };
-
-    const hideTip = () => elements.chartTooltip.classList.add('hidden');
-
-    circle.addEventListener('mouseenter', showTip);
-    circle.addEventListener('focus', showTip);
-    circle.addEventListener('mouseleave', hideTip);
-    circle.addEventListener('blur', hideTip);
-    svg.appendChild(circle);
-  });
-
-  elements.chartContainer.appendChild(svg);
 }
-
-// --- Data Operations ---
 
 async function checkHealth() {
   try {
-    await apiFetch('/api/health');
+    await request('/api/health');
   } catch {
-    // status already updated by apiFetch
+    // status already updated
   }
 }
 
 async function loadPatients() {
   try {
-    const data = await apiFetch('/api/patients');
+    const data = await request('/api/patients');
     state.patients = data.patients || [];
-    renderPatientsList();
+    syncPatientsView();
     if (!state.activePatientId && state.patients.length > 0) {
       await loadPatientLogs(state.patients[0].patientId);
     }
@@ -500,28 +180,92 @@ async function loadPatientLogs(patientId) {
     return;
   }
 
+  if (state.activeLoadController) {
+    state.activeLoadController.abort('superseded');
+  }
+  const controller = new AbortController();
+  state.activeLoadController = controller;
+
   state.activePatientId = trimmed;
   elements.viewPatientInput.value = trimmed;
   if (!elements.patientIdInput.value.trim()) {
     elements.patientIdInput.value = trimmed;
   }
-  renderPatientsList();
+  syncPatientsView();
 
   try {
-    const data = await apiFetch(
-      `/api/symptoms/${encodeURIComponent(trimmed)}?sort=${encodeURIComponent(state.sort)}`
-    );
-    state.logs = data.logs || [];
-    renderMetrics(state.logs);
-    renderChart(state.logs);
-    renderTable(state.logs);
+    const [logsData, summaryData] = await Promise.all([
+      request(
+        `/api/symptoms/${encodeURIComponent(trimmed)}?sort=${encodeURIComponent(state.sort)}`,
+        { signal: controller.signal }
+      ),
+      request(
+        `/api/patients/${encodeURIComponent(trimmed)}/summary`,
+        { signal: controller.signal }
+      )
+    ]);
+
+    state.logs = logsData.logs || [];
+    state.summary = summaryData.summary || null;
+
+    renderMetrics({
+      metricCount: elements.metricCount,
+      metricAvg: elements.metricAvg,
+      metricPeak: elements.metricPeak,
+      metricTrend: elements.metricTrend,
+      summary: state.summary,
+      maxSeverity: state.config.maxSeverity
+    });
+    renderChart({
+      chartContainer: elements.chartContainer,
+      chartTooltip: elements.chartTooltip,
+      activePatientId: state.activePatientId,
+      summary: state.summary,
+      maxSeverity: state.config.maxSeverity
+    });
+    renderTable({
+      symptomsTbody: elements.symptomsTbody,
+      activePatientSubtitle: elements.activePatientSubtitle,
+      activePatientId: state.activePatientId,
+      logs: state.logs,
+      maxSeverity: state.config.maxSeverity
+    });
+    const hasMore = state.summary && state.logs.length < state.summary.totalCount;
+    elements.tablePagination.classList.toggle('hidden', !hasMore);
   } catch (err) {
+    if (err.isSuperseded) return;
     showBanner(
       'error',
       'Unable to load symptom logs:',
       err.message,
       () => loadPatientLogs(trimmed)
     );
+  }
+}
+
+async function loadMoreLogs() {
+  if (!state.activePatientId) return;
+  elements.loadMoreBtn.disabled = true;
+  elements.loadMoreBtn.textContent = 'Loading...';
+  try {
+    const data = await request(
+      `/api/symptoms/${encodeURIComponent(state.activePatientId)}?sort=${encodeURIComponent(state.sort)}&offset=${state.logs.length}`
+    );
+    state.logs = [...state.logs, ...(data.logs || [])];
+    renderTable({
+      symptomsTbody: elements.symptomsTbody,
+      activePatientSubtitle: elements.activePatientSubtitle,
+      activePatientId: state.activePatientId,
+      logs: state.logs,
+      maxSeverity: state.config.maxSeverity
+    });
+    const hasMore = state.summary && state.logs.length < state.summary.totalCount;
+    elements.tablePagination.classList.toggle('hidden', !hasMore);
+  } catch (err) {
+    showBanner('error', 'Unable to load more logs:', err.message, loadMoreLogs);
+  } finally {
+    elements.loadMoreBtn.disabled = false;
+    elements.loadMoreBtn.textContent = 'Load More Entries';
   }
 }
 
@@ -536,7 +280,6 @@ async function handleFormSubmit(event) {
   const severity = Number(elements.severityInput.value);
   const rawTimestamp = elements.timestampInput.value;
 
-  // Client-side pre-validation for immediate feedback
   let hasClientError = false;
   if (!patientId) {
     setFieldError('patientId', 'Patient ID is required.');
@@ -546,8 +289,15 @@ async function handleFormSubmit(event) {
     setFieldError('symptomDescription', 'Symptom description cannot be empty.');
     hasClientError = true;
   }
-  if (!Number.isInteger(severity) || severity < 1 || severity > 10) {
-    setFieldError('severity', 'Severity must be a whole number from 1 to 10.');
+  if (
+    !Number.isInteger(severity) ||
+    severity < state.config.minSeverity ||
+    severity > state.config.maxSeverity
+  ) {
+    setFieldError(
+      'severity',
+      `Severity must be a whole number from ${state.config.minSeverity} to ${state.config.maxSeverity}.`
+    );
     hasClientError = true;
   }
 
@@ -582,23 +332,23 @@ async function handleFormSubmit(event) {
   elements.submitBtn.textContent = 'Submitting...';
 
   try {
-    await apiFetch('/api/symptoms', {
+    await request('/api/symptoms', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
 
     elements.descriptionInput.value = '';
-    elements.charCounter.textContent = '0 / 500';
+    elements.charCounter.textContent = `0 / ${state.config.maxDescriptionLength}`;
     elements.timestampInput.value = '';
     elements.severityInput.value = '5';
     renderSeverityPreview();
 
-    const successMsg = `Saved entry for ${patientId} (Severity ${severity}/10).`;
+    const successMsg = `Saved entry for ${patientId} (Severity ${severity}/${state.config.maxSeverity}).`;
     showBanner('success', 'Symptom logged:', successMsg);
     showFormFeedback('success', `Symptom logged: ${successMsg}`);
-    await loadPatients();
-    await loadPatientLogs(patientId);
+
+    await Promise.all([loadPatients(), loadPatientLogs(patientId)]);
   } catch (err) {
     if (Array.isArray(err.details)) {
       for (const detail of err.details) {
@@ -615,12 +365,10 @@ async function handleFormSubmit(event) {
   }
 }
 
-// --- Event Listeners ---
-
 elements.form.addEventListener('submit', handleFormSubmit);
 
 elements.descriptionInput.addEventListener('input', () => {
-  elements.charCounter.textContent = `${elements.descriptionInput.value.length} / 500`;
+  elements.charCounter.textContent = `${elements.descriptionInput.value.length} / ${state.config.maxDescriptionLength}`;
 });
 
 elements.severityInput.addEventListener('input', renderSeverityPreview);
@@ -649,6 +397,8 @@ elements.sortSelect.addEventListener('change', () => {
   }
 });
 
+elements.loadMoreBtn.addEventListener('click', loadMoreLogs);
+
 elements.bannerDismissBtn.addEventListener('click', hideBanner);
 elements.bannerRetryBtn.addEventListener('click', () => {
   const action = state.lastFailedAction;
@@ -656,7 +406,7 @@ elements.bannerRetryBtn.addEventListener('click', () => {
   if (typeof action === 'function') action();
 });
 
-// Initialize
 renderSeverityPreview();
+loadConfig();
 checkHealth();
 loadPatients();

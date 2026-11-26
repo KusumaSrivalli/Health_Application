@@ -8,6 +8,8 @@ export const MAX_DESCRIPTION_LENGTH = 500;
 export const MAX_PATIENT_ID_LENGTH = 64;
 
 const PATIENT_ID_PATTERN = /^[a-zA-Z0-9._-]+$/;
+const ISO_8601_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;
+const MAX_CLOCK_SKEW_MS = 60_000;
 
 /**
  * Validates a patient ID string.
@@ -88,23 +90,17 @@ export function validateSymptomInput(payload) {
     }
   }
 
-  // 3. Validate severity (integer 1-10)
+  // 3. Validate severity (strict integer 1-10, no string coercion)
   const rawSeverity = payload.severity;
-  let parsedSeverity = NaN;
-  if (typeof rawSeverity === 'number') {
-    parsedSeverity = rawSeverity;
-  } else if (typeof rawSeverity === 'string' && rawSeverity.trim() !== '') {
-    parsedSeverity = Number(rawSeverity);
-  }
-
   if (
-    !Number.isInteger(parsedSeverity) ||
-    parsedSeverity < MIN_SEVERITY ||
-    parsedSeverity > MAX_SEVERITY
+    typeof rawSeverity !== 'number' ||
+    !Number.isInteger(rawSeverity) ||
+    rawSeverity < MIN_SEVERITY ||
+    rawSeverity > MAX_SEVERITY
   ) {
     errors.push({
       field: 'severity',
-      message: `Severity must be a whole number between ${MIN_SEVERITY} and ${MAX_SEVERITY}.`
+      message: `Severity must be an integer between ${MIN_SEVERITY} and ${MAX_SEVERITY}.`
     });
   }
 
@@ -116,17 +112,22 @@ export function validateSymptomInput(payload) {
     (typeof payload.timestamp === 'string' && payload.timestamp.trim() === '')
   ) {
     normalizedTimestamp = new Date().toISOString();
-  } else if (typeof payload.timestamp !== 'string') {
+  } else if (typeof payload.timestamp !== 'string' || !ISO_8601_PATTERN.test(payload.timestamp.trim())) {
     errors.push({
       field: 'timestamp',
-      message: 'Timestamp must be a valid ISO-8601 date string.'
+      message: 'Timestamp must be a valid ISO-8601 date-time string (e.g. 2026-11-26T09:00:00Z).'
     });
   } else {
-    const parsedTime = Date.parse(payload.timestamp);
+    const parsedTime = Date.parse(payload.timestamp.trim());
     if (Number.isNaN(parsedTime)) {
       errors.push({
         field: 'timestamp',
-        message: 'Timestamp must be a valid ISO-8601 date string.'
+        message: 'Timestamp must be a valid ISO-8601 date-time string.'
+      });
+    } else if (parsedTime > Date.now() + MAX_CLOCK_SKEW_MS) {
+      errors.push({
+        field: 'timestamp',
+        message: 'Timestamp cannot be in the future.'
       });
     } else {
       normalizedTimestamp = new Date(parsedTime).toISOString();
@@ -142,7 +143,7 @@ export function validateSymptomInput(payload) {
     data: {
       patientId: patientCheck.value,
       symptomDescription: normalizedDescription,
-      severity: parsedSeverity,
+      severity: rawSeverity,
       timestamp: normalizedTimestamp
     }
   };
