@@ -314,6 +314,27 @@ input[type="range"] {
   min-height: 1em;
 }
 
+.form-feedback {
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 0.86rem;
+  font-weight: 500;
+  margin-bottom: 14px;
+  border: 1px solid var(--border);
+}
+
+.form-feedback.error {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  color: #991b1b;
+}
+
+.form-feedback.success {
+  background: var(--success-bg);
+  border-color: var(--success-border);
+  color: #166534;
+}
+
 /* Buttons */
 .btn {
   display: inline-flex;

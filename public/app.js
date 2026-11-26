@@ -33,6 +33,7 @@ const elements = {
   descriptionError: document.getElementById('symptomDescription-error'),
   severityError: document.getElementById('severity-error'),
   timestampError: document.getElementById('timestamp-error'),
+  formFeedback: document.getElementById('form-feedback'),
 
   viewPatientInput: document.getElementById('view-patient-input'),
   loadPatientBtn: document.getElementById('load-patient-btn'),
@@ -96,6 +97,16 @@ function hideBanner() {
   state.lastFailedAction = null;
 }
 
+function showFormFeedback(type, message) {
+  elements.formFeedback.className = `form-feedback ${type}`;
+  elements.formFeedback.textContent = message;
+}
+
+function hideFormFeedback() {
+  elements.formFeedback.className = 'form-feedback hidden';
+  elements.formFeedback.textContent = '';
+}
+
 function clearFieldErrors() {
   const fields = [
     [elements.patientIdInput, elements.patientIdError],
@@ -128,13 +139,20 @@ async function apiFetch(url, options = {}) {
   const timeoutId = setTimeout(() => controller.abort(), 8000);
 
   try {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      setConnectionStatus(false);
+      const offlineErr = new Error('You appear to be offline. Please check your network connection and try again.');
+      offlineErr.isNetworkError = true;
+      throw offlineErr;
+    }
+
     const response = await fetch(url, {
       ...options,
       signal: controller.signal
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      const err = new Error(data.error || `Request failed with status ${response.status}`);
+      const err = new Error(data.error || `Server error (${response.status}). Please try again.`);
       err.status = response.status;
       err.details = data.details || [];
       throw err;
@@ -144,11 +162,15 @@ async function apiFetch(url, options = {}) {
   } catch (err) {
     if (err.name === 'AbortError') {
       setConnectionStatus(false);
-      throw new Error('Request timed out. Please check your connection and try again.');
+      const timeoutErr = new Error('Request timed out. Please check your connection and try again.');
+      timeoutErr.isNetworkError = true;
+      throw timeoutErr;
     }
     if (err instanceof TypeError) {
       setConnectionStatus(false);
-      throw new Error('Unable to reach the HealthTrack server. Verify the server is running.');
+      const netErr = new Error('Unable to reach the HealthTrack server. Verify the server is running.');
+      netErr.isNetworkError = true;
+      throw netErr;
     }
     throw err;
   } finally {
@@ -506,6 +528,7 @@ async function loadPatientLogs(patientId) {
 async function handleFormSubmit(event) {
   event.preventDefault();
   hideBanner();
+  hideFormFeedback();
   clearFieldErrors();
 
   const patientId = elements.patientIdInput.value.trim();
@@ -528,8 +551,21 @@ async function handleFormSubmit(event) {
     hasClientError = true;
   }
 
+  let parsedTimestampIso = null;
+  if (rawTimestamp) {
+    const parsed = new Date(rawTimestamp);
+    if (Number.isNaN(parsed.getTime())) {
+      setFieldError('timestamp', 'Please enter a valid date and time.');
+      hasClientError = true;
+    } else {
+      parsedTimestampIso = parsed.toISOString();
+    }
+  }
+
   if (hasClientError) {
-    showBanner('error', 'Please fix the highlighted fields:', 'All required symptom fields must be valid.');
+    const msg = 'All required symptom fields must be valid.';
+    showBanner('error', 'Please fix the highlighted fields:', msg);
+    showFormFeedback('error', `Please fix the highlighted fields: ${msg}`);
     return;
   }
 
@@ -538,8 +574,8 @@ async function handleFormSubmit(event) {
     symptomDescription,
     severity
   };
-  if (rawTimestamp) {
-    payload.timestamp = new Date(rawTimestamp).toISOString();
+  if (parsedTimestampIso) {
+    payload.timestamp = parsedTimestampIso;
   }
 
   elements.submitBtn.disabled = true;
@@ -558,7 +594,9 @@ async function handleFormSubmit(event) {
     elements.severityInput.value = '5';
     renderSeverityPreview();
 
-    showBanner('success', 'Symptom logged:', `Saved entry for ${patientId} (Severity ${severity}/10).`);
+    const successMsg = `Saved entry for ${patientId} (Severity ${severity}/10).`;
+    showBanner('success', 'Symptom logged:', successMsg);
+    showFormFeedback('success', `Symptom logged: ${successMsg}`);
     await loadPatients();
     await loadPatientLogs(patientId);
   } catch (err) {
@@ -567,12 +605,10 @@ async function handleFormSubmit(event) {
         setFieldError(detail.field, detail.message);
       }
     }
-    showBanner(
-      'error',
-      'Submission failed:',
-      err.message,
-      null
-    );
+    const canRetry = Boolean(err.isNetworkError || (err.status && err.status >= 500));
+    const retryFn = canRetry ? () => elements.form.requestSubmit() : null;
+    showBanner('error', 'Submission failed:', err.message, retryFn);
+    showFormFeedback('error', `Submission failed: ${err.message}`);
   } finally {
     elements.submitBtn.disabled = false;
     elements.submitBtn.textContent = 'Log Symptom';
