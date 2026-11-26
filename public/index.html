@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HealthTrack — Patient Symptom Tracker</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="container topbar-inner">
+      <div class="brand">
+        <div class="brand-icon" aria-hidden="true">+</div>
+        <div>
+          <h1>HealthTrack</h1>
+          <p class="subtitle">Patient Symptom Tracker &amp; Provider Insights</p>
+        </div>
+      </div>
+      <div id="connection-status" class="status-pill status-checking" role="status" aria-live="polite">
+        <span class="status-dot"></span>
+        <span class="status-text">Checking API...</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="container main-layout">
+    <!-- Global feedback banner -->
+    <div id="feedback-banner" class="banner hidden" role="alert" aria-live="assertive">
+      <div class="banner-content">
+        <strong id="banner-title">Notice</strong>
+        <span id="banner-message"></span>
+      </div>
+      <div class="banner-actions">
+        <button id="banner-retry-btn" class="btn btn-sm btn-secondary hidden" type="button">Retry</button>
+        <button id="banner-dismiss-btn" class="btn-icon" type="button" aria-label="Dismiss notification">&times;</button>
+      </div>
+    </div>
+
+    <div class="grid">
+      <!-- Left Panel: Log Symptom Form -->
+      <section class="card form-card" aria-labelledby="form-heading">
+        <div class="card-header">
+          <h2 id="form-heading">Log a Symptom</h2>
+          <p class="card-hint">Record how you feel to share accurate history with your care team.</p>
+        </div>
+
+        <form id="symptom-form" novalidate>
+          <div class="form-group">
+            <label for="patient-id-input">Patient ID <span class="required">*</span></label>
+            <input
+              id="patient-id-input"
+              name="patientId"
+              type="text"
+              placeholder="e.g., PAT-101"
+              maxlength="64"
+              autocomplete="off"
+              list="known-patients-list"
+              required
+            />
+            <datalist id="known-patients-list"></datalist>
+            <p class="field-error" id="patientId-error" aria-live="polite"></p>
+          </div>
+
+          <div class="form-group">
+            <div class="label-row">
+              <label for="symptom-description-input">Symptom Description <span class="required">*</span></label>
+              <span id="char-counter" class="char-counter">0 / 500</span>
+            </div>
+            <textarea
+              id="symptom-description-input"
+              name="symptomDescription"
+              rows="3"
+              maxlength="500"
+              placeholder="Describe your symptoms, triggers, or location (e.g., Throbbing headache behind left eye)"
+              required
+            ></textarea>
+            <p class="field-error" id="symptomDescription-error" aria-live="polite"></p>
+          </div>
+
+          <div class="form-group">
+            <div class="label-row">
+              <label for="severity-input">Severity (1–10) <span class="required">*</span></label>
+              <span id="severity-preview" class="severity-badge severity-moderate">5 / 10 &middot; Moderate</span>
+            </div>
+            <input
+              id="severity-input"
+              name="severity"
+              type="range"
+              min="1"
+              max="10"
+              step="1"
+              value="5"
+            />
+            <div class="severity-scale" aria-hidden="true">
+              <span>1 (Mild)</span>
+              <span>5 (Moderate)</span>
+              <span>10 (Severe)</span>
+            </div>
+            <p class="field-error" id="severity-error" aria-live="polite"></p>
+          </div>
+
+          <div class="form-group">
+            <div class="label-row">
+              <label for="timestamp-input">Date &amp; Time <span class="optional">(optional)</span></label>
+              <button id="use-now-btn" type="button" class="link-btn">Use current time</button>
+            </div>
+            <input
+              id="timestamp-input"
+              name="timestamp"
+              type="datetime-local"
+            />
+            <p class="field-hint">Leave blank to automatically record the current time.</p>
+            <p class="field-error" id="timestamp-error" aria-live="polite"></p>
+          </div>
+
+          <button id="submit-btn" type="submit" class="btn btn-primary btn-full">
+            Log Symptom
+          </button>
+        </form>
+      </section>
+
+      <!-- Right Panel: Insights, Chart, and Table -->
+      <section class="results-column" aria-labelledby="history-heading">
+        <!-- Patient Filter & Controls -->
+        <div class="card controls-card">
+          <div class="controls-row">
+            <div class="patient-lookup">
+              <label for="view-patient-input" class="sr-only">View Patient ID</label>
+              <input
+                id="view-patient-input"
+                type="text"
+                placeholder="Enter Patient ID (e.g., PAT-101)"
+                list="known-patients-list"
+              />
+              <button id="load-patient-btn" type="button" class="btn btn-secondary">Load History</button>
+            </div>
+
+            <div class="sort-control">
+              <label for="sort-select">Sort:</label>
+              <select id="sort-select">
+                <option value="desc">Newest first</option>
+                <option value="asc">Oldest first</option>
+              </select>
+            </div>
+          </div>
+
+          <div id="quick-patients" class="quick-patients hidden" aria-label="Known patients">
+            <span class="quick-label">Patients:</span>
+            <div id="quick-patients-chips" class="chips"></div>
+          </div>
+        </div>
+
+        <!-- Summary Metrics -->
+        <div class="metrics-grid" aria-label="Symptom summary metrics">
+          <div class="metric-card">
+            <span class="metric-label">Total Entries</span>
+            <strong id="metric-count" class="metric-value">0</strong>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">Avg Severity</span>
+            <strong id="metric-avg" class="metric-value">—</strong>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">Peak Severity</span>
+            <strong id="metric-peak" class="metric-value">—</strong>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">Recent Trend</span>
+            <strong id="metric-trend" class="metric-value">—</strong>
+          </div>
+        </div>
+
+        <!-- Severity Trend Line Chart -->
+        <section class="card chart-card" aria-labelledby="chart-heading">
+          <div class="card-header-inline">
+            <div>
+              <h2 id="chart-heading">Severity Trend Over Time</h2>
+              <p class="card-hint">Chronological symptom severity (1–10) for clinical review</p>
+            </div>
+            <div class="chart-legend" aria-hidden="true">
+              <span class="legend-item"><span class="legend-dot mild"></span>Mild (1–3)</span>
+              <span class="legend-item"><span class="legend-dot moderate"></span>Moderate (4–6)</span>
+              <span class="legend-item"><span class="legend-dot severe"></span>Severe (7–10)</span>
+            </div>
+          </div>
+          <div id="chart-container" class="chart-container">
+            <div class="empty-state">Enter or select a Patient ID to view severity trends.</div>
+          </div>
+          <div id="chart-tooltip" class="chart-tooltip hidden" role="status"></div>
+        </section>
+
+        <!-- Symptom Logs Table -->
+        <section class="card table-card" aria-labelledby="history-heading">
+          <div class="card-header-inline">
+            <div>
+              <h2 id="history-heading">Symptom Log History</h2>
+              <p id="active-patient-subtitle" class="card-hint">No patient selected</p>
+            </div>
+          </div>
+
+          <div class="table-wrapper">
+            <table id="symptoms-table">
+              <thead>
+                <tr>
+                  <th scope="col">Date &amp; Time</th>
+                  <th scope="col">Symptom Description</th>
+                  <th scope="col">Severity</th>
+                  <th scope="col">Level</th>
+                </tr>
+              </thead>
+              <tbody id="symptoms-tbody">
+                <tr>
+                  <td colspan="4" class="empty-cell">No symptom logs loaded yet.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+    </div>
+  </main>
+
+  <script src="/app.js" type="module"></script>
+</body>
+</html>
