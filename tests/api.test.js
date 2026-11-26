@@ -101,6 +101,19 @@ describe('HealthTrack HTTP API', () => {
     });
     assert.equal(second.status, 201);
 
+    const listDefault = await inject(handler, {
+      method: 'GET',
+      url: '/api/symptoms/PAT-200'
+    });
+    assert.equal(listDefault.status, 200);
+    const defaultBody = listDefault.json();
+    assert.equal(defaultBody.sort, 'asc');
+    assert.equal(defaultBody.count, 2);
+    assert.deepEqual(
+      defaultBody.logs.map((l) => l.symptomDescription),
+      ['Morning chills', 'Evening fever']
+    );
+
     const listAsc = await inject(handler, {
       method: 'GET',
       url: '/api/symptoms/PAT-200?sort=asc'

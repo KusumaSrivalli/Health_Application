@@ -122,7 +122,10 @@ export function createRequestHandler({ store, publicDir = path.resolve(process.c
         }
 
         const log = store.createLog(result.data);
-        sendJson(res, 201, { log });
+        sendJson(res, 201, {
+          message: 'Symptom log created successfully.',
+          log
+        });
         return;
       }
 

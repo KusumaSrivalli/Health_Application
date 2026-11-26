@@ -138,8 +138,8 @@
             <div class="sort-control">
               <label for="sort-select">Sort:</label>
               <select id="sort-select">
+                <option value="asc" selected>Oldest first (latest at bottom)</option>
                 <option value="desc">Newest first</option>
-                <option value="asc">Oldest first</option>
               </select>
             </div>
           </div>
@@ -174,8 +174,8 @@
         <section class="card chart-card" aria-labelledby="chart-heading">
           <div class="card-header-inline">
             <div>
-              <h2 id="chart-heading">Severity Trend Over Time</h2>
-              <p class="card-hint">Chronological symptom severity (1–10) for clinical review</p>
+              <h2 id="chart-heading">Severity Trend (Last 30 Days)</h2>
+              <p class="card-hint">Daily average symptom severity (1–10) over the last 30 days</p>
             </div>
             <div class="chart-legend" aria-hidden="true">
               <span class="legend-item"><span class="legend-dot mild"></span>Mild (1–3)</span>

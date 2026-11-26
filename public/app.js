@@ -5,7 +5,7 @@
 
 const state = {
   activePatientId: '',
-  sort: 'desc',
+  sort: 'asc',
   logs: [],
   patients: [],
   lastFailedAction: null
@@ -276,6 +276,37 @@ function renderTable(logs) {
   }
 }
 
+function aggregateLast30DaysAverage(logs) {
+  const cutoffMs = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const recent = logs.filter((log) => {
+    const ms = Date.parse(log.timestamp);
+    return !Number.isNaN(ms) && ms >= cutoffMs;
+  });
+
+  const byDay = new Map();
+  for (const log of recent) {
+    const d = new Date(log.timestamp);
+    const dayKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    if (!byDay.has(dayKey)) {
+      byDay.set(dayKey, { dayKey, timestamp: log.timestamp, sum: 0, count: 0, descriptions: [] });
+    }
+    const bucket = byDay.get(dayKey);
+    bucket.sum += log.severity;
+    bucket.count += 1;
+    bucket.descriptions.push(log.symptomDescription);
+  }
+
+  return Array.from(byDay.values())
+    .sort((a, b) => a.dayKey.localeCompare(b.dayKey))
+    .map((bucket) => ({
+      dayKey: bucket.dayKey,
+      timestamp: bucket.timestamp,
+      severity: Number((bucket.sum / bucket.count).toFixed(1)),
+      count: bucket.count,
+      descriptions: bucket.descriptions
+    }));
+}
+
 function renderChart(logs) {
   elements.chartContainer.innerHTML = '';
   elements.chartTooltip.classList.add('hidden');
@@ -285,9 +316,14 @@ function renderChart(logs) {
     return;
   }
 
-  const chronological = [...logs].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-  if (chronological.length === 0) {
+  if (logs.length === 0) {
     elements.chartContainer.innerHTML = '<div class="empty-state">No data points yet for this patient.</div>';
+    return;
+  }
+
+  const dailyPoints = aggregateLast30DaysAverage(logs);
+  if (dailyPoints.length === 0) {
+    elements.chartContainer.innerHTML = '<div class="empty-state">No symptom logs recorded in the last 30 days.</div>';
     return;
   }
 
@@ -302,12 +338,12 @@ function renderChart(logs) {
   svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
   svg.setAttribute('class', 'chart-svg');
   svg.setAttribute('role', 'img');
-  svg.setAttribute('aria-label', `Symptom severity trend chart for ${state.activePatientId}`);
+  svg.setAttribute('aria-label', `30-day average symptom severity trend chart for ${state.activePatientId}`);
 
   const yForSeverity = (sev) => pad.top + ((10 - sev) / 9) * plotH;
   const xForIndex = (idx) => {
-    if (chronological.length === 1) return pad.left + plotW / 2;
-    return pad.left + (idx / (chronological.length - 1)) * plotW;
+    if (dailyPoints.length === 1) return pad.left + plotW / 2;
+    return pad.left + (idx / (dailyPoints.length - 1)) * plotW;
   };
 
   // Horizontal gridlines for 1, 4, 7, 10
@@ -333,7 +369,7 @@ function renderChart(logs) {
   }
 
   // Polyline path
-  const points = chronological.map((item, idx) => ({
+  const points = dailyPoints.map((item, idx) => ({
     x: xForIndex(idx),
     y: yForSeverity(item.severity),
     item
@@ -353,7 +389,7 @@ function renderChart(logs) {
   // Data points & X-axis labels
   const labelStep = Math.max(1, Math.ceil(points.length / 6));
   points.forEach((pt, idx) => {
-    const info = getSeverityInfo(pt.item.severity);
+    const info = getSeverityInfo(Math.round(pt.item.severity));
 
     if (idx % labelStep === 0 || idx === points.length - 1) {
       const xLabel = document.createElementNS(svgNS, 'text');
@@ -381,15 +417,15 @@ function renderChart(logs) {
       tip.innerHTML = '';
       const header = document.createElement('div');
       header.style.fontWeight = '700';
-      header.textContent = `Severity ${pt.item.severity}/10 (${info.label})`;
+      header.textContent = `Avg Severity ${pt.item.severity}/10 (${info.label})`;
 
       const time = document.createElement('div');
       time.style.opacity = '0.85';
-      time.textContent = formatDateTime(pt.item.timestamp);
+      time.textContent = `${pt.item.dayKey} · ${pt.item.count} ${pt.item.count === 1 ? 'entry' : 'entries'}`;
 
       const desc = document.createElement('div');
       desc.style.marginTop = '4px';
-      desc.textContent = pt.item.symptomDescription;
+      desc.textContent = pt.item.descriptions.join('; ');
 
       tip.append(header, time, desc);
       tip.classList.remove('hidden');
